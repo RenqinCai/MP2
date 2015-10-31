@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/MP1/lib/jwnl-1.3.3.jar"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/MP1/lib/opennlp-maxent-3.0.3.jar"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/MP1/lib/opennlp-tools-1.5.3.jar"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/MP1/lib/opennlp-uima-1.5.3.jar"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/Git_MP1/MP1/lib/poi-3.13-20150929.jar"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/Git_MP1/MP1/lib/poi-ooxml-3.13-20150929.jar"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/Git_MP1/MP1/lib/jaxen-1.1-beta-2.jar"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/Git_MP1/MP1/lib/xbean.jar"/>
+	<classpathentry kind="lib" path="C:/Course/IR/MP1/MP1/Git_MP1/MP1/lib/xbean_xpath.jar"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>
