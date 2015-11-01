@@ -7,14 +7,18 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
 
 import json.JSONArray;
@@ -50,7 +54,10 @@ public class DocAnalyzer {
 	
 	//you might need something like this to store the counting statistics for validating Zipf's and computing IDF
 	HashMap<String, Token> m_stats;
-
+	Set<String> unigramTokenSet;
+	Set<String> bigramTokenSet;
+	int unigramSize;
+	
 	//we have also provided sample implementation of language model in src.structures.LanguageModel
 	
 	public DocAnalyzer() {
@@ -58,6 +65,10 @@ public class DocAnalyzer {
 		m_stats = new HashMap<String, Token>();
 		m_stopwords = new HashSet<String>();
 		Query_reviews = new ArrayList<Post>();
+		unigramTokenSet = new HashSet<String>();
+		bigramTokenSet = new HashSet<String>();
+		unigramSize = 0;
+
 		try{
 			tokenizer = new TokenizerME(new TokenizerModel(new FileInputStream(
 				"./data/Model/en-token.bin")));
@@ -89,11 +100,16 @@ public class DocAnalyzer {
 		}
 	}
 
+	// get the TTF of unigram and bigram,
+	// store the bigram and unigram separately in a Set
 	public void analyzeDocumentTTF(JSONObject json) {
 		try {
 			JSONArray jarray = json.getJSONArray("Reviews");
 			for (int i = 0; i < jarray.length(); i++) {
 				Post review = new Post(jarray.getJSONObject(i));
+
+				String preToken = null;
+				boolean flag = false;
 
 				for (String token : tokenizer.tokenize(review.getContent())) {
 
@@ -102,8 +118,7 @@ public class DocAnalyzer {
 						continue;
 					}
 
-
-					Token tokenObject;
+					Token tokenObject = null;
 					if (!m_stats.containsKey(token)) {
 						tokenObject = new Token(token);
 						int curMapSize = m_stats.size();
@@ -115,14 +130,165 @@ public class DocAnalyzer {
 
 					double curVal = tokenObject.getValue();
 					tokenObject.setValue(curVal + 1);
+					unigramTokenSet.add(token);
+					unigramSize += 1;
+					
+					if (!flag) {
+						preToken = token;
+						flag = true;
+						continue;
+					}
+					
+					String biToken = preToken + "_" + token;
+					Token biTokenObject = null;
+					if (!m_stats.containsKey(biToken)) {
+						biTokenObject = new Token(biToken);
+						int curMapSize = m_stats.size();
+						biTokenObject.setID(curMapSize + 1);
+						m_stats.put(biToken, biTokenObject);
+						
+						curVal = biTokenObject.getValue();
+						biTokenObject.setValue(curVal + 1);
+					} else {
+						biTokenObject = m_stats.get(biToken);
+						curVal = biTokenObject.getValue();
+						biTokenObject.setValue(curVal + 1);
+					}
+
+					bigramTokenSet.add(biToken);
+					preToken = token;
 				}
 
 				m_reviews.add(review);
 			}
 
+			// System.out.println("bigramToken");
+			// for(String bigramToken : bigramTokenSet){
+			// System.out.println(bigramToken);
+			// }
+			
 		} catch (JSONException e) {
 			e.printStackTrace();
 		}
+	}
+
+	public void getFollowingToken(String previousToken, int topK) {
+		HashMap<String, Double> bigramModel = new HashMap<String, Double>();
+		System.out.println("get Following Token");
+		for (String token : unigramTokenSet) {
+
+			String bigramToken = previousToken + "_" + token;// construct
+																// "good"+"followingword"
+			double bigramTokenProb = 0.0;
+			double bigramTokenTTF = 0.0;
+			double previousTokenTTF = 0.0;
+			double tokenTTF = 0.0;
+			double tokenProb = 0.0;
+			
+
+			double lambda = 0.9; //linear smoothing
+			double delta = 0.1;// abosulute smoothing
+			// if query is in bigram, then c(w_{i-1}w_{i}) is larger than 0
+			if (bigramTokenSet.contains(bigramToken)) {
+				bigramTokenTTF = m_stats.get(bigramToken).getValue(); // get TTF
+			} else {//else is zero
+				bigramTokenTTF = 0;
+			}
+			
+			previousTokenTTF = m_stats.get(previousToken).getValue();
+
+			tokenTTF = m_stats.get(token).getValue();
+			tokenProb = tokenTTF / unigramSize; // unigram model prob
+
+			//bigramTokenProb = linearSmoothing(lambda, bigramTokenTTF,
+			// previousTokenTTF, tokenProb);
+
+			bigramTokenProb = absoluteSmoothing(delta, bigramTokenTTF,
+					previousTokenTTF, tokenProb, uniquePreBigram);
+			bigramModel.put(token, bigramTokenProb);
+			// System.out.println("tokenProb");
+			// System.out.println(bigramTokenProb);
+			// System.out.println(bigramToken);
+
+		}
+
+		System.out.println("topK");
+		// bigramModel = sort(bigramModel);
+
+		String fileName = "topK_" + previousToken + "word.txt";
+		try {
+			PrintStream out = new PrintStream(new FileOutputStream(fileName));
+			for (String followingToken : bigramModel.keySet()) {
+
+				out.println(followingToken + "\t"
+						+ bigramModel.get(followingToken));
+				// out.println(bigramModel.get(followingToken));
+			}
+			out.flush();
+			out.close();
+			System.out.println(m_stats.size());
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+
+	}
+	
+	public double linearSmoothing(double lambda, double bigramTokenTTF,
+			double previousTokenTTF, double tokenProb) {
+		double bigramProb = 0.0;
+		bigramProb = (1 - lambda) * (bigramTokenTTF / previousTokenTTF)
+				+ lambda * tokenProb;
+		
+		return bigramProb;
+	}
+	
+	public double absoluteSmoothing(double delta, double bigramTokenTTF,
+			double previousTokenTTF, double unigramSize, double uniquePreBigram) {
+		double term1 = 0.0;
+		if (previousTokenTTF > 0.0) {
+			term
+		}
+		double bigramProb = 0.0;
+		bigramProb = (bigramTokenTTF + delta)
+				/ (previousTokenTTF + delta * unigramSize);
+
+		return bigramProb;
+	}
+	
+	public HashMap<String, Double> sort(HashMap<String, Double> mapArg) {
+		List mapKeys = new ArrayList(mapArg.keySet());
+		List mapValues = new ArrayList(mapArg.values());
+
+		Collections.sort(mapValues, Collections.reverseOrder());
+		Collections.sort(mapKeys, Collections.reverseOrder());
+
+		// Collections.sort(mapValues);
+		// Collections.sort(mapKeys);
+
+		HashMap<String, Double> duplicateMap = new HashMap<String, Double>();
+
+		Iterator valueIt = mapValues.iterator();
+		while (valueIt.hasNext()) {
+			Object val = valueIt.next();
+			Iterator KeyIt = mapKeys.iterator();
+
+			while (KeyIt.hasNext()) {
+				Object key = KeyIt.next();
+				String comp1 = mapArg.get(key).toString();
+				String comp2 = val.toString();
+
+				if (comp1.equals(comp2)) {
+					mapArg.remove(key);
+					mapKeys.remove(key);
+					duplicateMap.put((String) key, (Double) val);
+					break;
+				}
+
+			}
+		}
+
+		return duplicateMap;
+
 	}
 
 	public void analyzeDocumentDF(JSONObject json) {
@@ -180,7 +346,7 @@ public class DocAnalyzer {
 		System.out.println("computeIDF...");
 	}
 	
-	
+	//
 	public void getDocumentWeight(ArrayList<Post> reviewsList) {
 		for(Post review : reviewsList){
 
@@ -345,214 +511,7 @@ public class DocAnalyzer {
 			
 		}
 
-//		System.out.println("get similar review for query...");
-//		try {
-//			BufferedWriter out = new BufferedWriter(new FileWriter(
-//					outSimilarFile));
-//			
-//			for (Post query : qTotalSimilarity.keySet()) {
-//				
-//			
-//				Map<Post, Double> tempMap = qTotalSimilarity.get(query);
-//
-//				ArrayList<Entry<Post, Double>> arrayList = new ArrayList<Map.Entry<Post, Double>>(
-//						tempMap.entrySet());
-//
-//				Collections.sort(arrayList,
-//						new Comparator<Map.Entry<Post, Double>>() {
-//							public int compare(Map.Entry<Post, Double> o1,
-//									Map.Entry<Post, Double> o2) {
-//								double retval = (o1.getValue() - o2.getValue());
-//								if (Math.abs(retval)<1e-4)
-//									return 0;
-//								else if (retval > 1e-4)
-//									return 1;
-//								else
-//									return -1;
-//							}
-//						});
-//
-//				HashMap<Post, Double> topMap = new HashMap<Post, Double>();
-//				for (Entry<Post, Double> entry : arrayList) {
-//					topMap.put(entry.getKey(), entry.getValue());
-//				}
-				//
-				// Collections.sort(arrayList,
-				// new Comparator<Map.Entry<Post, Double>>() {
-				// public int compare(Map.Entry<Post, Double> map1,
-				// Map.Entry<Post, Double> map2) {
-				// return ((map2.getValue() - map1.getValue() == 0) ? 0
-				// : (map2.getValue() - map1.getValue() > 0) ? 1
-				// : -1);
-				// }
-				// });
-				// Collections.reverse(arrayList);
-//				HashMap<Post, Double> topMap = new HashMap<Post, Double>();
-//				for (Entry<Post, Double> entry : arrayList) {
-//					topMap.put(entry.getKey(), entry.getValue());
-//				}
-
-//				out.write("........\n");
-//				out.write("Query" + query.getID());
-//				out.write("\n");
-//				
-//				int i = 0;
-//				for (Post similarReview : topMap.keySet()) {
-//					if (i > 2) {
-//						break;
-//					}
-//
-//					double sim = topMap.get(similarReview);
-//					
-//						out.write("similarity" + String.valueOf(sim));
-//						out.write("\n");
-//						out.write("ID " + similarReview.getID());
-//						out.write("\n");
-//						out.write("Author " + similarReview.getAuthor());
-//						out.write("\n");
-//						out.write("Content " + similarReview.getContent());
-//						out.write("\n");
-//						out.write("Date " + similarReview.getDate());
-//						out.write("\n");
-//
-//					i += 1;
-//				}
-
-				// for (Post similarReview
-				// :qTotalSimilarity.get(query).keySet()) {
-				//
-				// double sim = qTotalSimilarity.get(query).get(similarReview);
-				//
-				// if(sim > pivotSim){
-				// out.write("similarity" + String.valueOf(sim));
-				// out.write("\n");
-				// out.write("ID " + similarReview.getID());
-				// out.write("\n");
-				// out.write("Author " + similarReview.getAuthor());
-				// out.write("\n");
-				// out.write("Content " + similarReview.getContent());
-				// out.write("\n");
-				// out.write("Date " + similarReview.getDate());
-				// out.write("\n");
-				// }
-				//
-				// }
-				
-	// }
-	// out.flush();
-	// out.close();
-	// System.out.println(m_stats.size());
-	// }catch (IOException e) {
-	// e.printStackTrace();
-	// }
-	//
-	// }
-			
-//	
-//	 try {
-//	 BufferedWriter out = new BufferedWriter(new FileWriter(
-//	 outSimilarFile));
-//	
-//	 for (Post query : qTotalSimilarity.keySet()) {
-//	 out.write("........\n");
-//	 out.write("Query" + query.getID());
-//	 out.write("\n");
-//	
-//	 // for (Post similarReview :
-//	 // qTotalSimilarity.get(query).keySet()) {
-//	 // double sim = qTotalSimilarity.get(query).get(similarReview);
-//	
-//	 HashMap<Post, Double>yourMap = qTotalSimilarity.get(query);
-//	
-//	 // to hold the result
-//	 Map<Post,Double> map = new LinkedHashMap<Post,Double>();
-//	
-//	
-//	 List<Post> yourMapKeys = new ArrayList<Post>(yourMap.keySet());
-//	 List<Double> yourMapValues = new ArrayList<Double>(yourMap.values());
-//	 TreeSet<Double> sortedSet = new TreeSet<Double>(yourMapValues);
-//	 Object[] sortedArray = sortedSet.toArray();
-//	 int size = sortedArray.length;
-//	
-//	 for (int i = size - 1; i >= 0; i--) {
-//	 map.put(yourMapKeys.get(yourMapValues.indexOf(sortedArray[i])),
-//	 (double)sortedArray[i]);
-//	 }
-//	
-//	 Set<Post> ref = map.keySet();
-//	 int i = 0;
-//	 for (Post obj:ref){
-//	 if(i >2)
-//	 break;
-//	 double sim = qTotalSimilarity.get(query).get(obj);
-//	 out.write(String.valueOf(sim));
-//	 out.write("\n");
-//	 out.write("ID " + obj.getID());
-//	 out.write("\n");
-//	 out.write("Author " + obj.getAuthor());
-//	 out.write("\n");
-//	 out.write("Content " + obj.getContent());
-//	 out.write("\n");
-//	 out.write("Date " + obj.getDate());
-//	 out.write("\n");
-//	 i += 1;
-//	 }
-//	
-//	 }
-//			 }
-//	 out.flush();
-//	 out.close();
-//	 System.out.println(m_stats.size());
-//	 }catch (IOException e) {
-//	 e.printStackTrace();
-//	 }
-	// // simList.add(sim);
-	//
-	// }
-				
-//				 Collections.sort(simList);
-//				 Collections.reverse(simList);
-//				 System.out.println(simList.size());
-//				 if (simList.size() > 4) {
-//					 pivotSim = simList.get(3);
-//					 System.out.println(pivotSim);
-//				 } else {
-//					 pivotSim = 0.0;
-//				 }
-	// int i = 0;
-	//
-	// // System.out.println(pivotSim);
-	// for (Post similarReview : qTotalSimilarity.get(query).keySet()) {
-	//
-	// double sim = qTotalSimilarity.get(query).get(similarReview);
-	// // if(sim > pivotSim){
-	// i += 1;
-	// out.write(String.valueOf(sim));
-	// out.write("\n");
-	// out.write("ID " + similarReview.getID());
-	// out.write("\n");
-	// out.write("Author " + similarReview.getAuthor());
-	// out.write("\n");
-	// out.write("Content " + similarReview.getContent());
-	// out.write("\n");
-	// out.write("Date " + similarReview.getDate());
-	// out.write("\n");
-	// }
-	// System.out.println(i);
-	// }
-	// out.write('\n');
-	//
-	// }
-	//
-	// out.flush();
-	// out.close();
-	// System.out.println(m_stats.size());
-	// } catch (IOException e) {
-	// e.printStackTrace();
-	// }
-	// }
-
-	public void analyzeDocumentStopWord(JSONObject json) {
+	public void getBigram(JSONObject json) {
 		try {
 			JSONArray jarray = json.getJSONArray("Reviews");
 			for (int i = 0; i < jarray.length(); i++) {
@@ -763,7 +722,7 @@ public class DocAnalyzer {
 			if (f.isFile() && f.getName().endsWith(suffix)){
 				// analyzeDocumentTTF(LoadJson(f.getAbsolutePath()));
 				// analyzeDocumentDF(LoadJson(f.getAbsolutePath()));
-				analyzeDocumentStopWord(LoadJson(f.getAbsolutePath()));
+				analyzeDocumentTTF(LoadJson(f.getAbsolutePath()));
 			}
 			else if (f.isDirectory())
 				LoadDirectory(f.getAbsolutePath(), suffix);
@@ -868,56 +827,34 @@ public class DocAnalyzer {
 	}
 
 
-	public static void main(String[] args) {		
+	public static void main(String[] args) {
+		try{
+			PrintStream out = new PrintStream(new FileOutputStream("mp2_1.txt"));
+			System.setOut(out);
+		} catch (Exception e) {
+
+		}
+
 		DocAnalyzer analyzer = new DocAnalyzer();
-
-		// String str =
-		// "This is a string 3.50 ... In this 4, all punctuation will be removed by PunctuationRemover instance .";
-		// analyzer.TokenizerDemo(str);
-
-		// String fileName = "tokenTTF.txt";
-		// String fileName = "tokenDF.txt";
-		// String fileName = "tokenDFStopWords.txt";
-//		String fileName = "tokenDFStopWordsIDF.txt";
-//
-//		analyzer.LoadStopwords("./data/englishstop.txt");
-//		analyzer.LoadDirectory("./data/yelp", ".json");
-//		System.out.println("filteringStopwords");
-//		analyzer.filteringStopWords();
-//		analyzer.computeIDF();
-//		analyzer.writeToTxt(fileName);
 		
 		String testfolder = "./data/yelp";
 		String queryfile = "./data/query/query.json";
 		String suffix = ".json";
-		String stopWordsFile = "./data/englishstop.txt";
-		String newStopFile = "./data/newStopWords.txt";
-		String outSimilarFile = "similarReivew.txt";
-		String outIDFFile = "IDF.txt";
 
-		analyzer.computeSimilarity(testfolder, queryfile, suffix,
-				stopWordsFile, newStopFile, outSimilarFile);
+		String previousToken = "good";
+		int topK = 10;
+		//String stopWordsFile = "./data/englishstop.txt";
+		//String newStopFile = "./data/newStopWords.txt";
+		//String outSimilarFile = "similarReivew.txt";
+		//String outIDFFile = "IDF.txt";
 
-		// analyzer.LoadStopwords(stopWordsFile);
-		// analyzer.LoadDirectory(testfolder, suffix);
-		// analyzer.getControlledVoc();
-		// analyzer.getNewStopWords();
-		// System.out.println("controlled vocabulory");
-		// analyzer.computeIDF();
-		//
-		// analyzer.writeToTxt(outIDFFile);
-		
-		// analyzer.computeSimilarity(testfolder, queryfolder, suffix,
-		// stopWordsFile, outFile);
+		// LoadStopwords(stopWordsFile);
+		analyzer.LoadDirectory(testfolder, suffix);
+		analyzer.getFollowingToken(previousToken, topK);
 
-		//codes for demonstrating tokenization and stemming
-		// analyzer.TokenizerDemon("I've practiced for 30 years in pediatrics, and I've never seen anything quite like this.");
 
-		//codes for loading json file
-		//analyzer.analyzeDocumentDemo(analyzer.LoadJson("./data/Samples/query.json"));
-		
-		//when we want to execute it in command line
-		//analyzer.LoadDirectory("./data/Samples", ".json");
+
+
 	}
 
 }

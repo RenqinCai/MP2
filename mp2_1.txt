@@ -1,0 +1,5 @@
+Loading 102201 review documents from ./data/yelp
+word size1526518
+get Following Token
+topK
+1526518
